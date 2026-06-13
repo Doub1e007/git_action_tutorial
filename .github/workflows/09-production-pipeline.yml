@@ -1,0 +1,171 @@
+# =============================================================================
+# 第 9 课：生产级 CI/CD 流水线 —— 整合所有知识点
+# =============================================================================
+# 这是一个完整的 CI/CD 流水线，真实可用。
+# 流程：CI（lint + 矩阵测试）→ Build（打包 + Docker 镜像）→ Deploy（分环境部署）
+
+name: "09-高级：生产级 CI/CD"
+
+on:
+  push:
+    branches: ["master", "main"]
+    paths: ["src/**", "package.json", "Dockerfile", ".github/workflows/**"]
+  pull_request:
+    branches: ["master", "main"]
+  workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: "部署目标环境"
+        type: choice
+        options: ["none", "staging", "production"]
+        default: "none"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ========================================
+  # 阶段 1：CI —— 代码质量门禁
+  # ========================================
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - name: "安装依赖"
+        run: npm install
+
+      - name: "代码规范检查"
+        run: npm run lint
+
+      - name: "单元测试"
+        run: npm test
+
+      - name: "测试报告"
+        if: always()
+        run: |
+          echo "## CI 结果" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Lint & Test 完成" >> $GITHUB_STEP_SUMMARY
+
+  # ========================================
+  # 阶段 2：矩阵测试 —— 多环境兼容性验证
+  # ========================================
+  compatibility-test:
+    needs: ci
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node-version: [18, 20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+      - run: npm install
+      - run: npm test
+
+  # ========================================
+  # 阶段 3：Build —— 构建 Docker 镜像
+  # ========================================
+  build:
+    needs: compatibility-test
+    # 只在 push 到主分支时构建，PR 不构建
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 自动生成语义化标签
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ========================================
+  # 阶段 4：Deploy —— 按环境部署
+  # ========================================
+  deploy-staging:
+    needs: build
+    if: github.event.inputs.deploy_env == 'staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.example.com
+    steps:
+      - name: "部署到 Staging"
+        run: |
+          echo "正在部署镜像: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          echo "部署到预发布环境..."
+          echo "✅ Staging 部署完成"
+
+  deploy-production:
+    needs: build
+    if: github.event.inputs.deploy_env == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://example.com
+    steps:
+      - name: "部署到 Production"
+        run: |
+          echo "正在部署镜像: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}"
+          echo "部署到生产环境..."
+          echo "✅ Production 部署完成"
+
+  # ========================================
+  # 阶段 5：Notify —— 通知
+  # ========================================
+  notify:
+    needs: [ci, build, deploy-staging, deploy-production]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: "流水线汇总"
+        run: |
+          echo "## 流水线执行完毕" >> $GITHUB_STEP_SUMMARY
+          echo "| 阶段 | 结果 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 兼容性测试 | ${{ needs.compatibility-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 构建 | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging | ${{ needs.deploy-staging.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production | ${{ needs.deploy-production.result }} |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,64 @@
+# =============================================================================
+# 第 8 课：可复用工作流（Reusable Workflow）
+# =============================================================================
+# 当多个仓库需要相同的 CI 流程时，把流水线抽取成"模板"。
+# 调用方只需传参数，不用重复写相同逻辑。
+#
+# 调用方式（在另一个仓库的 .yml 文件中）：
+#   jobs:
+#     call-ci:
+#       uses: 你的组织/这个仓库/.github/workflows/08-reusable-workflows.yml@main
+#       with:
+#         node-version: "20"
+#       secrets:
+#         my-token: ${{ secrets.MY_TOKEN }}
+
+name: "08-高级：可复用工作流"
+
+# ========================================
+# workflow_call：声明这个工作流可以被其他仓库调用
+# ========================================
+on:
+  workflow_call:
+    # 定义调用方可以传的参数
+    inputs:
+      node-version:
+        description: "Node.js 版本"
+        type: string
+        default: "20"
+      run-lint:
+        description: "是否运行 lint"
+        type: boolean
+        default: true
+    # 定义调用方必须传入的 Secret
+    secrets:
+      my-token:
+        description: "调用方的 Token"
+        required: false
+
+jobs:
+  reusable-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - run: npm install
+
+      - name: "Lint"
+        if: inputs.run-lint
+        run: npm run lint
+
+      - name: "测试"
+        run: npm test
+
+# =============================================================================
+# 关键知识点:
+#   1. workflow_call → 声明此工作流可被其他仓库/工作流调用
+#   2. inputs → 定义参数（类型支持 string / boolean / number / choice）
+#   3. secrets → 定义调用方必须传入的 Secret
+#   4. 调用方用 uses: 引用，语法: 所有者/仓库/.github/workflows/文件.yml@分支
+# =============================================================================
