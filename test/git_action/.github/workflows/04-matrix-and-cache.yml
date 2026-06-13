@@ -1,0 +1,89 @@
+# =============================================================================
+# 第 4 课：矩阵构建 + 缓存加速
+# =============================================================================
+# 矩阵构建 = 一套代码，在多个环境组合下同时测试
+# 缓存 = 把依赖存起来，下次流水线直接复用，大幅提速
+
+name: "04-进阶：矩阵构建与缓存"
+
+on:
+  push:
+    branches: ["master", "main"]
+  workflow_dispatch:
+
+jobs:
+  # ========================================
+  # 矩阵策略：3 个 Node 版本 × 2 个操作系统 = 6 个并行 Job
+  # ========================================
+  test-matrix:
+    strategy:
+      # fail-fast: false 表示某个组合失败了，其他继续跑（不互相影响）
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: [18, 20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # ---- 缓存 npm 依赖 ----
+      # actions/cache 是 GitHub 官方的缓存 Action
+      # 原理：根据 key 查找缓存，命中则直接恢复文件，否则重新生成并保存
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm          # 要缓存的目录
+          # key 是缓存的唯一标识。${{ hashFiles('package-lock.json') }}
+          # 会根据 lock 文件内容生成 hash，lock 文件变了就自动创建新缓存
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          # restore-keys: key 精确匹配不到时，用前缀模糊匹配（取最新的那份）
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: "安装依赖"
+        run: npm install
+
+      - name: "运行测试"
+        run: npm test
+
+      - name: "报告"
+        run: echo "✅ Node ${{ matrix.node-version }} on ${{ matrix.os }} 测试通过！"
+
+  # ========================================
+  # 进阶技巧：在矩阵中包含/排除特定组合
+  # ========================================
+  test-matrix-advanced:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: [18, 20, 22]
+        # 排除不合理的组合（比如 windows + node22 跳过）
+        exclude:
+          - os: windows-latest
+            node-version: 22
+        # 添加额外的特定组合
+        include:
+          - os: macos-latest
+            node-version: 20
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install
+      - run: npm test
+
+# =============================================================================
+# 关键知识点:
+#   1. strategy.matrix → 笛卡尔积生成全部组合，每个组合一个独立 Job
+#   2. fail-fast: false → 一个失败不取消其他
+#   3. exclude → 去掉不需要的组合
+#   4. include → 添加额外组合
+#   5. actions/cache@v4 → 缓存 key 命中则直接恢复，跳过重复安装
+#   6. hashFiles() → GitHub Actions 内置函数，返回文件的 hash 值
+# =============================================================================

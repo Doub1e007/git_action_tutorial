@@ -1,0 +1,103 @@
+# =============================================================================
+# 第 5 课：Job 间数据传递 —— Artifacts + Outputs
+# =============================================================================
+# Job 跑在不同的虚拟机上，默认不共享文件系统。
+# 要在 Job 之间传递数据，有两种方式：
+#   1. Artifacts（产物）= 上传文件，下游下载（适合大文件、构建结果）
+#   2. Outputs（输出）= 传递字符串值（适合状态、版本号等小数据）
+
+name: "05-进阶：产物与数据传递"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # ========================================
+  # Job A: build —— 构建并产出 build 文件 + 版本号
+  # ========================================
+  build:
+    runs-on: ubuntu-latest
+    # 声明这个 Job 有哪些输出（给下游用）
+    outputs:
+      build_time: ${{ steps.set-output.outputs.build_time }}
+      artifact_name: ${{ steps.set-output.outputs.artifact_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- 模拟构建，产出文件 ----
+      - name: "构建项目"
+        run: |
+          mkdir -p dist
+          cp -r src dist/
+          echo "构建时间: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" > dist/build-meta.txt
+          echo "提交 SHA: $GITHUB_SHA" >> dist/build-meta.txt
+          ls -la dist/
+
+      # ---- 上传 Artifact ---- 名称在后边步骤和下游 Job 中引用
+      - name: "上传构建产物"
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-files          # artifact 名称
+          path: dist/               # 要上传的目录或文件
+
+      # ---- 设置 Output ---- 通过 $GITHUB_OUTPUT 文件传递
+      - id: set-output
+        run: |
+          echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "artifact_name=dist-files" >> $GITHUB_OUTPUT
+
+  # ========================================
+  # Job B: test —— 下载构建产物并测试
+  # ========================================
+  test:
+    needs: build                              # 等 build 完成
+    runs-on: ubuntu-latest
+    steps:
+      # ---- 下载上一步的 Artifact ----
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-files                    # 对应 upload 时的 name
+          path: ./downloaded-dist
+
+      - name: "验证产物"
+        run: |
+          echo "下载的文件："
+          ls -la ./downloaded-dist/
+          echo ""
+          echo "构建元数据："
+          cat ./downloaded-dist/build-meta.txt
+
+      # ---- 读取上游 Job 的 Output ----
+      - name: "读取上游 Output"
+        run: |
+          echo "构建时间: ${{ needs.build.outputs.build_time }}"
+          echo "产物名称: ${{ needs.build.outputs.artifact_name }}"
+
+  # ========================================
+  # Job C: report —— 汇总结果
+  # ========================================
+  report:
+    needs: [build, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: "汇总报告"
+        run: |
+          echo "## 流水线结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | 结果 |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| test  | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "构建时间: ${{ needs.build.outputs.build_time }}" >> $GITHUB_STEP_SUMMARY
+
+# =============================================================================
+# 关键知识点:
+#   1. $GITHUB_OUTPUT → 在当前 Job 中设置输出值（echo "key=val" >> $GITHUB_OUTPUT）
+#   2. outputs: → 声明 Job 的输出给下游用
+#   3. needs.xxx.outputs.yyy → 下游读取上游的输出
+#   4. actions/upload-artifact@v4 → 上传文件产物（大文件）
+#   5. actions/download-artifact@v4 → 下载文件产物
+#   6. Artifacts 可以跨 Job 传递，也可以在 GitHub 页面手动下载
+# =============================================================================

@@ -1,0 +1,13 @@
+{
+  "name": "github-actions-tutorial",
+  "version": "1.0.0",
+  "description": "GitHub Actions 零基础到进阶教程的示例项目",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/*.test.js",
+    "lint": "node src/lint.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

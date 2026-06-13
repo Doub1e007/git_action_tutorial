@@ -1,0 +1,79 @@
+# =============================================================================
+# 第 3 课：实战 CI —— 拉代码 → 安装依赖 → Lint → 测试 → 构建
+# =============================================================================
+# 现在用真实的 Node.js 项目来演示一个标准 CI 流程。
+# 流程: checkout（拉代码）→ setup（装环境）→ lint（代码规范）→ test（测试）
+
+name: "03-实战：构建与测试"
+
+on:
+  push:
+    branches: ["master", "main"]
+  pull_request:
+    branches: ["master", "main"]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    # ========================================
+    # 策略：设置工作目录和工作变量
+    # ========================================
+    defaults:
+      run:
+        working-directory: ./
+
+    steps:
+      # ---- 1. 拉代码 ----
+      # 这是几乎每条流水线的第一步。actions/checkout 是官方 Action，
+      # 它把你的仓库代码拉到 Runner 的工作目录。
+      - name: "拉取代码"
+        uses: actions/checkout@v4
+
+      # ---- 2. 安装 Node.js ----
+      # actions/setup-node 是官方的 Node.js 安装 Action。
+      # 它会帮你装好指定版本的 Node.js 并配置 npm。
+      - name: "安装 Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          # cache: "npm" 会智能缓存 node_modules，加速后续运行
+
+      # ---- 3. 安装依赖 ----
+      - name: "安装项目依赖"
+        run: npm install
+
+      # ---- 4. Lint 代码规范检查 ----
+      # CI 里 lint 先跑，尽早暴露代码风格问题
+      - name: "代码规范检查"
+        run: npm run lint
+
+      # ---- 5. 运行测试 ----
+      # 测试是 CI 的灵魂：任何失败的测试都会让流水线变红
+      - name: "运行测试"
+        run: npm test
+
+      # ---- 6. 测试报告 (GitHub 专属功能) ----
+      # $GITHUB_STEP_SUMMARY 是 GitHub Actions 的特殊文件，
+      # 写进去的内容会在 Actions 页面的 Summary 区显示，支持 Markdown。
+      - name: "生成测试报告"
+        if: always()   # 测试失败了也生成报告
+        run: |
+          echo "## CI 检查结果" >> $GITHUB_STEP_SUMMARY
+          echo "| 检查项 | 状态 |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | ✅ 通过 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | ✅ 通过 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**触发者**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**提交**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+# =============================================================================
+# 关键知识点:
+#   1. actions/checkout@v4  → 拉代码（几乎所有流水线第一步）
+#   2. actions/setup-node@v4 → 装运行时（类似的有 setup-python, setup-java...）
+#   3. with:  → 给 Action 传参数
+#   4. if: always() → 即使前面失败也执行（常用于清理和报告）
+#   5. $GITHUB_STEP_SUMMARY → 往 Summary 页面输出 Markdown
+# =============================================================================

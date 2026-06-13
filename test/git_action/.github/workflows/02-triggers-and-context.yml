@@ -1,0 +1,108 @@
+# =============================================================================
+# 第 2 课：触发器大全 + 上下文表达式
+# =============================================================================
+# GitHub Actions 的核心思想是"事件驱动"。你定义好"当 X 发生时做 Y"。
+# 这节课学两个东西：
+#   1. on: 有哪些触发方式
+#   2. ${{ }} 表达式语法（叫"上下文"），让你在脚本里拿到本次运行的元数据
+
+name: "02-入门：触发器与上下文"
+
+# =============================================================================
+# 触发器详解
+# =============================================================================
+on:
+  # --- 代码事件 ---
+  push:
+    # 只在推送这些分支时触发
+    branches: ["master", "main"]
+    # 也可以指定路径过滤（只有 src 下的文件变了才触发）
+    paths: ["src/**", "package.json"]
+
+  pull_request:
+    branches: ["master", "main"]
+    # PR 的几种活动类型
+    types: [opened, synchronize, reopened]
+
+  # --- 手动触发（带输入参数） ---
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "选择部署环境"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: "staging"
+      reason:
+        description: "部署原因"
+        required: false
+        default: "手动触发"
+
+  # --- 定时触发（POSIX cron 语法） ---
+  # 格式: 分 时 日 月 周
+  # 下面这样写 = 每天 UTC 0:00（北京时间 8:00）自动跑
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  explore-trigger:
+    runs-on: ubuntu-latest
+    steps:
+      # ========================================
+      # ${{ }} 是 GitHub Actions 的表达式语法
+      # 所有你需要的运行时信息都在里面
+      # ========================================
+      - name: "查看触发事件的元数据"
+        run: |
+          echo "触发事件类型: ${{ github.event_name }}"
+          echo "触发的分支/标签: ${{ github.ref }}"
+          echo "提交的 SHA: ${{ github.sha }}"
+          echo "触发者: ${{ github.actor }}"
+          echo "仓库全名: ${{ github.repository }}"
+          echo "Runner 操作系统: ${{ runner.os }}"
+          echo "Runner 架构: ${{ runner.arch }}"
+
+      - name: "不同事件走不同逻辑"
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "代码推送触发的"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "PR 触发的"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "定时任务触发的"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "手动触发的，环境: ${{ github.event.inputs.environment }}"
+          fi
+
+      - name: "条件执行 —— 只在手动触发时跑"
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "手动触发原因: ${{ github.event.inputs.reason }}"
+
+      - name: "条件执行 —— 只在 PR 时跑"
+        if: github.event_name == 'pull_request'
+        run: echo "这是一个 Pull Request"
+
+  # ========================================
+  # 第二个 Job —— 演示并行和依赖
+  # ========================================
+  parallel-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "我和上面的 Job 是并行执行的！"
+
+# =============================================================================
+# 常用的上下文变量速查:
+#   github.event_name      → push / pull_request / schedule / workflow_dispatch
+#   github.ref             → refs/heads/master 或 refs/tags/v1.0
+#   github.sha             → 当前提交的完整 hash
+#   github.actor           → 谁触发的
+#   github.repository      → 所有者/仓库名
+#   runner.os              → Linux / Windows / macOS
+#   runner.arch            → X64 / ARM64
+#   env.XXX                → 你自定义的环境变量
+#   secrets.XXX            → 你在 GitHub Settings 里设的密钥
+#   needs.job_id.result    → 依赖 Job 的执行结果 (success/failure/skipped)
+#   steps.step_id.outputs  → 另一个步骤输出的值
+# =============================================================================
